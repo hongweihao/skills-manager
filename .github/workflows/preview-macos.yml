@@ -1,0 +1,99 @@
+name: macOS PR 1 Preview
+
+on:
+  push:
+    branches: [build/pr-1-macos-preview]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build macOS Apple Silicon test package
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      BUILD_TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Configure test package
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const config = {
+            productName: 'skills-manager-preview',
+            identifier: 'com.agentskills.desktop.preview',
+            bundle: { createUpdaterArtifacts: false, macOS: { signingIdentity: '-' } },
+            plugins: { updater: { endpoints: [] } },
+          };
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'preview-tauri.json'), JSON.stringify(config));
+          JS
+
+      - name: Build CLI binary
+        run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin skills-manager-cli --target "$BUILD_TARGET"
+
+      - name: Build test DMG with ad-hoc signature
+        run: npm run tauri:build -- --ci --target "$BUILD_TARGET" --bundles dmg --config "$RUNNER_TEMP/preview-tauri.json"
+
+      - name: Verify packaged app and collect download
+        run: |
+          set -euo pipefail
+          APP_PATH="src-tauri/target/$BUILD_TARGET/release/bundle/macos/skills-manager-preview.app"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          test -x "$APP_PATH/Contents/MacOS/skills-manager-cli"
+          "$APP_PATH/Contents/MacOS/skills-manager-cli" --version
+          mkdir -p preview-download
+          DMG_PATH=$(find "src-tauri/target/$BUILD_TARGET/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$DMG_PATH"
+          hdiutil verify "$DMG_PATH"
+          cp "$DMG_PATH" preview-download/skills-manager-PR1-macOS-arm64.dmg
+          shasum -a 256 preview-download/skills-manager-PR1-macOS-arm64.dmg > preview-download/SHA256SUMS.txt
+          {
+            echo 'Skills Manager PR #1 - macOS Apple Silicon preview'
+            echo "Source commit: $GITHUB_SHA"
+            echo 'Includes the Git install selection and reinstall translation fixes.'
+            echo 'Ad-hoc signed test package; not notarized by Apple.'
+            echo 'Quit the existing Skills Manager before opening this preview.'
+            echo 'This preview uses the same skill library and preferences as your existing app.'
+            echo 'If macOS blocks opening, allow this specific app in System Settings > Privacy & Security.'
+            echo 'Verify selection stays inside the Git install card, and the reinstall button is translated.'
+          } > preview-download/README.txt
+          {
+            echo '## macOS Apple Silicon preview'
+            echo "Source: \`$GITHUB_SHA\`"
+            echo 'Download the artifact below, unzip it, and open the DMG.'
+            echo 'This test package is ad-hoc signed and not notarized.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: skills-manager-PR1-macOS-arm64-${{ github.run_number }}
+          path: preview-download/
+          if-no-files-found: error
+          retention-days: 14
