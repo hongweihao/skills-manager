@@ -1447,7 +1447,8 @@ export function InstallSkills() {
 
       {activeTab === "git" && (
         <div className="animate-in fade-in duration-300">
-          <div className="app-panel max-w-lg p-5">
+          {/* Keep WebKit's paragraph selection highlight within the card. */}
+          <div className="app-panel relative max-w-lg p-5">
             <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface-hover">
               <Github className="h-5 w-5 text-tertiary" />
             </div>
