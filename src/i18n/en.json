@@ -529,6 +529,7 @@
     "repoUrl": "Repository URL",
     "repoUrlPlaceholder": "https://github.com/user/repo.git or git@github.com...",
     "gitAlreadyInstalled": "\"{{name}}\" is already installed. Reinstalling will update it.",
+    "gitReinstall": "Reinstall & Update",
     "onlyThisContributor": "Only this contributor",
     "installClone": "Clone & Preview",
     "gitPreview": {

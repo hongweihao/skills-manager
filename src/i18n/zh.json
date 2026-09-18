@@ -529,6 +529,7 @@
     "repoUrl": "仓库地址",
     "repoUrlPlaceholder": "https://github.com/user/repo.git 或 git@github.com...",
     "gitAlreadyInstalled": "\"{{name}}\" 已安装，重新安装将会更新。",
+    "gitReinstall": "重新安装并更新",
     "onlyThisContributor": "仅看该贡献者",
     "installClone": "克隆并预览",
     "gitPreview": {
