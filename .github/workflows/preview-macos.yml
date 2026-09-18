@@ -36,6 +36,7 @@ jobs:
       - uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: npm ci
@@ -54,25 +55,29 @@ jobs:
           fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'preview-tauri.json'), JSON.stringify(config));
           JS
 
-      - name: Build CLI binary
-        run: cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin skills-manager-cli --target "$BUILD_TARGET"
-
       - name: Build test DMG with ad-hoc signature
-        run: npm run tauri:build -- --ci --target "$BUILD_TARGET" --bundles dmg --config "$RUNNER_TEMP/preview-tauri.json"
+        # Tauri builds every Cargo binary with --bins, including the CLI.
+        run: npm run tauri:build -- --ci --target "$BUILD_TARGET" --bundles dmg --config "$RUNNER_TEMP/preview-tauri.json" -- --locked
 
       - name: Verify packaged app and collect download
         run: |
           set -euo pipefail
-          APP_PATH="src-tauri/target/$BUILD_TARGET/release/bundle/macos/skills-manager-preview.app"
+          DMG_PATH=$(find "src-tauri/target/$BUILD_TARGET/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$DMG_PATH"
+          hdiutil verify "$DMG_PATH"
+          # A dmg-only build removes the intermediate .app. Verify the actual
+          # application shipped inside the installer instead.
+          MOUNT_PATH="$RUNNER_TEMP/preview-volume"
+          mkdir -p "$MOUNT_PATH"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_PATH" "$DMG_PATH"
+          trap 'hdiutil detach "$MOUNT_PATH" >/dev/null || true' EXIT
+          APP_PATH="$MOUNT_PATH/skills-manager-preview.app"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           test -x "$APP_PATH/Contents/MacOS/skills-manager-cli"
           "$APP_PATH/Contents/MacOS/skills-manager-cli" --version
           mkdir -p preview-download
-          DMG_PATH=$(find "src-tauri/target/$BUILD_TARGET/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -print -quit)
-          test -n "$DMG_PATH"
-          hdiutil verify "$DMG_PATH"
           cp "$DMG_PATH" preview-download/skills-manager-PR1-macOS-arm64.dmg
-          shasum -a 256 preview-download/skills-manager-PR1-macOS-arm64.dmg > preview-download/SHA256SUMS.txt
+          (cd preview-download && shasum -a 256 skills-manager-PR1-macOS-arm64.dmg > SHA256SUMS.txt)
           {
             echo 'Skills Manager PR #1 - macOS Apple Silicon preview'
             echo "Source commit: $GITHUB_SHA"
@@ -97,3 +102,12 @@ jobs:
           path: preview-download/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Preserve DMG for diagnosis if verification fails
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unverified-macOS-preview-${{ github.run_number }}
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: ignore
+          retention-days: 3
